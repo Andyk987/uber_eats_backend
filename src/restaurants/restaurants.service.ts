@@ -1,25 +1,137 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { Category } from './entities/category.entity';
+import { User } from 'src/users/entities/user.entity';
 import { Restaurant } from './entities/restaurant.entity';
-import { CreateRestaurantDto } from './dto/create-restaurant.dto';
-import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
+import { AllCategoriesOutput } from './dto/all-categories.dto';
+import { CreateRestaurantInput, CreateRestaurantOutput } from './dto/create-restaurant.dto';
+import { EditRestaurantInput, EditRestaurantOutput } from './dto/edit-restaurant.dto';
+import { DeleteRestaurantInput, DeleteRestaurantOutput } from './dto/delete-restaurant.dto';
+import { CategoryRepository } from './repositories/category.repository';
 
 @Injectable()
-export class RestaurantService{
-	constructor(@InjectRepository(Restaurant) private readonly restaurants: Repository<Restaurant>,) {}
-	
-	getAll(): Promise<Restaurant[]> {
-		return this.restaurants.find();
+export class RestaurantService {
+	constructor(
+		@InjectRepository(Restaurant)
+		private readonly restaurants: Repository<Restaurant>,
+		private readonly categories: CategoryRepository,
+	) {}
+
+	async createRestaurant(
+		owner: User,
+		createRestaurantInput: CreateRestaurantInput
+	): Promise<CreateRestaurantOutput> {
+		try {
+			const newRestaurant = this.restaurants.create(createRestaurantInput);
+			newRestaurant.owner = owner;
+			const category = await this.categories.getOrCreate(
+				createRestaurantInput.categoryName,
+			)
+			newRestaurant.category = category;
+			await this.restaurants.save(newRestaurant);
+			return {
+				ok: true,
+			};
+		} catch {
+			return {
+				ok: false,
+				error: 'Could not create restaurant',
+			};
+		}
 	}
 
-	createRestaurant(createRestaurantDto: CreateRestaurantDto): Promise<Restaurant> {
-		const newRestaurant = this.restaurants.create(createRestaurantDto);
-		return this.restaurants.save(newRestaurant);
-	}
+	async editRestaurant(
+		owner: User,
+		editRestaurantInput: EditRestaurantInput
+	): Promise<EditRestaurantOutput> {
+		try {
+			const restaurant = await this.restaurants.findOne(
+				editRestaurantInput.restaurantId,
+				{ loadRelationIds: true },
+			);
+			if(!restaurant) {
+				return {
+					ok: false,
+					error: "Restaurant not found",
+				};
+			}
+			if(owner.id !== restaurant.ownerId) {
+				return {
+					ok: false,
+					error: "You can't edit a restaurant that you don't own",
+				};
+			}
 
-	updateRestaurant({ id, data }: UpdateRestaurantDto) {
-		this.restaurants.update(id, {...data})
+			let category: Category = null;
+			if(editRestaurantInput.categoryName) {
+				category = await this.categories.getOrCreate(
+					editRestaurantInput.categoryName,
+				)
+			}
+			await this.restaurants.save([
+				{
+					id: editRestaurantInput.restaurantId,
+					...editRestaurantInput,
+					...(category && { category }),
+				}
+			])
+			return {
+				ok: true
+			}
+		} catch {
+			return {
+				ok: false,
+				error: "Could not edit Restaurant"
+			}
+		}
 	}
 	
+	async deleteRestaurant(
+		owner: User,
+		{ restaurantId }: DeleteRestaurantInput
+	): Promise<DeleteRestaurantOutput> {
+		try {
+			const restaurant = await this.restaurants.findOne(
+				restaurantId,
+				{ loadRelationIds: true },
+			);
+			if(!restaurant) {
+				return {
+					ok: false,
+					error: "Restaurant not found",
+				};
+			}
+			if(owner.id !== restaurant.ownerId) {
+				return {
+					ok: false,
+					error: "You can't delete a restaurant that you don't own",
+				};
+			}
+			await this.restaurants.delete(restaurantId);
+			return {
+				ok: true,
+			}
+		} catch {
+			return {
+				ok: false,
+				error: "Could not edit Restaurant"
+			}
+		}
+	}
+				
+	async allCategories(): Promise<AllCategoriesOutput> {
+		try {
+			const categories = await this.categories.find();
+			return {
+				ok: true,
+				categories,
+			};
+		} catch {
+			return {
+				ok: false,
+				error: "Could not load categories",
+			}
+		}
+	}
 }
